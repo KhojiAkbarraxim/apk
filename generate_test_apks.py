@@ -889,6 +889,128 @@ def generate_benign_app(output_dir: str) -> str:
     return build_apk(manifest_config, dex_strings, os.path.join(output_dir, "test_benign_app.apk"))
 
 
+def generate_mixed(output_dir: str) -> str:
+    """
+    mixed.apk – union of all samples: every permission, component and
+    DEX trigger string from the SMS stealer + banker trojan (plus a few
+    benign strings).  A single "kitchen-sink" sample that should trip
+    every detector at once.
+    Expected score: 🔴 Critical 8-10/10
+    """
+    b64_tg = base64.b64encode(b"api.telegram.org/bot").decode()
+
+    def _union(seq):
+        """Order-preserving de-dup."""
+        seen, out = set(), []
+        for x in seq:
+            if x not in seen:
+                seen.add(x)
+                out.append(x)
+        return out
+
+    manifest_config = {
+        "package": "uz.fake.mixed",
+        "version_code": 1,
+        "version_name": "1.0",
+        "min_sdk": 21,
+        "target_sdk": 33,
+        "app_label": "System Service",
+        "permissions": _union([
+            "android.permission.RECEIVE_SMS",
+            "android.permission.READ_SMS",
+            "android.permission.SEND_SMS",
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
+            "android.permission.READ_PHONE_STATE",
+            "android.permission.READ_CONTACTS",
+            "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.SYSTEM_ALERT_WINDOW",
+            "android.permission.BIND_ACCESSIBILITY_SERVICE",
+            "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+        ]),
+        "activities": [
+            {
+                "name": "uz.fake.mixed.MainActivity",
+                "launcher": True,
+                "exported": True,
+            },
+        ],
+        "receivers": [
+            {
+                "name": "uz.fake.mixed.SmsReceiver",
+                "exported": True,
+                "enabled": True,
+                "intent_filters": [{
+                    "actions": ["android.provider.Telephony.SMS_RECEIVED"],
+                    "priority": 999,
+                }],
+            },
+            {
+                "name": "uz.fake.mixed.BootReceiver",
+                "exported": True,
+                "enabled": True,
+                "intent_filters": [{
+                    "actions": ["android.intent.action.BOOT_COMPLETED"],
+                }],
+            },
+        ],
+        "services": [
+            {
+                "name": "uz.fake.mixed.A11yService",
+                "permission": "android.permission.BIND_ACCESSIBILITY_SERVICE",
+                "exported": False,
+                "actions": ["android.accessibilityservice.AccessibilityService"],
+                "meta_data": [
+                    {"name": "android.accessibilityservice", "resource": 0x7F040000},
+                ],
+            },
+            {
+                "name": "uz.fake.mixed.NotifListener",
+                "permission": "android.permission.BIND_NOTIFICATION_LISTENER_SERVICE",
+                "exported": False,
+                "actions": ["android.service.notification.NotificationListenerService"],
+                "meta_data": [],
+            },
+        ],
+    }
+
+    dex_strings = _union([
+        # Type descriptor (needed for the type_ids section)
+        "Luz/fake/mixed/MainActivity;",
+
+        # ── SMS stealer indicators ──
+        "api.telegram.org",
+        "1234567890:ABCDefghIJKLmnopQRSTuvwxyz123456789",
+        "sendMessage", "sendDocument", "sendPhoto",
+        "chat_id", "chat_id=-1001234567890",
+        "getMessagesFromIntent", "createFromPdu", "getDisplayMessageBody",
+        "getMessageBody", "getOriginatingAddress", "sendTextMessage",
+        "HttpURLConnection", "http://evil-c2.example.com/api/sms", "185.192.69.42",
+        "content://sms/inbox", "content://sms", "address",
+        "setComponentEnabledSetting",
+        "Landroid/accessibilityservice/AccessibilityService;",
+        "performGlobalAction", "dispatchGesture", "getRootInActiveWindow",
+        "findAccessibilityNodeInfosByViewId", "findAccessibilityNodeInfosByText",
+        "canDrawOverlays", "Landroid/view/WindowManager;", "addView", "loadUrl",
+        b64_tg,
+        "android.settings.action.MANAGE_OVERLAY_PERMISSION",
+        "loadDataWithBaseURL",
+
+        # ── Banker trojan indicators ──
+        "http://banking-helper.example.com/config",
+
+        # ── Uzbek / Russian banking + payment lures (all samples) ──
+        "uzcard", "humo", "payme.uz", "click.uz", "kapitalbank",
+        "karta raqami", "tasdiqlash kodi", "sms kod",
+        "amal qilish muddati",
+
+        # ── A few benign strings for noise ──
+        "Calculator", "onCreate", "setContentView",
+    ])
+
+    return build_apk(manifest_config, dex_strings, os.path.join(output_dir, "mixed.apk"))
+
+
 # ──────────────────────────────────────────────────────────────────────
 # MAIN
 # ──────────────────────────────────────────────────────────────────────
@@ -907,6 +1029,8 @@ def main():
     results.append(("🟠 High (5-7)", generate_banker_trojan(output_dir)))
     print()
     results.append(("🟢 Low (0-2)", generate_benign_app(output_dir)))
+    print()
+    results.append(("🔴 Critical (8-10)", generate_mixed(output_dir)))
     print()
 
     print("=" * 60)
